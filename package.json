@@ -1,0 +1,32 @@
+{
+  "name": "node-redis-pseudocluster",
+  "version": "0.0.1",
+  "description": "A crappy \"cluster\" implementation for nodejs/redis to tide us over until the real deal comes out.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/objectundefined/node-redis-pseudocluster"
+  },
+  "keywords": [
+    "redis",
+    "redis-cluster",
+    "cluster",
+    "sharding"
+  ],
+  "dependencies": {
+    "redis": "~0.8.4",
+    "upnode": "~0.4.3",
+    "async": "~0.2.9",
+    "underscore": "~1.5.2"
+  },
+  "author": "Gabriel Lipson",
+  "license": "BSD",
+  "readmeFilename": "README.md",
+  "gitHead": "f990a04402c4e994d938a7250791b52098235f0e",
+  "bugs": {
+    "url": "https://github.com/objectundefined/node-redis-pseudocluster/issues"
+  }
+}
