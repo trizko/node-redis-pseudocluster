@@ -3,86 +3,92 @@ var format = require('util').format ;
 var proxy = require('./lib/proxy') ;
 var async = require('async') ;
 var commands = require('redis/lib/commands') ;
-var redis_protocol = require('redis-protocol-stream') ;
 var _ = require('underscore') ;
 var HashRing = require('hashring') ;
-var unshardable = require('redis-shard/lib/unshardable') ;
+var shardable = require('redis-shard/lib/shardable') ;
 var redis = require('redis') ;
-var servers = [ '127.0.0.1:6379', '127.0.0.1:6380' ] ;
-var ring = new HashRing(servers) ;
-var clientQueues = servers.map(function(server){
+var Parser = require('redis/lib/parser/hiredis').Parser ;
+
+var PseudoCluster = module.exports = function ( servers ) {
   
-  var _ready = false ;
-  var host = server.split(':')[0] ;
-  var port = server.split(':')[1] ;
-  var client = net.connect({port: port , host : host},function(){
-      
-    _ready = true ;
-      
-  });
+  var serverKeys = this.serverKeys = servers.map(function(s){ return format("%s:%s",s.host,s.port) }) ;
 
-  var q = async.queue(function (payload, callback) {
+  var ring = this.ring = new HashRing(serverKeys) ;
 
-    var protocol_serialize = redis_protocol.stringify() ;
-    
-    client.once('data',function(d){
-      
-      callback( null , d )
-      
-    })
-    
-    client.write(payload.cmd) ;
-    
-  }, 1 );
+  var clientQueues = this.clientQueues = servers.map(function(server){
   
-  return q ;
-  
-})
+    var _ready = false ;
+    var host = server.host ;
+    var port = server.port ;
+    var client = net.connect({port: port , host : host},function(){
+      
+      _ready = true ;
+      
+    });
 
-var server = net.createServer(function(c) { //'connection' listener
-
-  c.on('data',function(clientCommand){
-
-    var protocol_parse = redis_protocol.parse({ return_buffers : false }) ;
-  
-    protocol_parse.on( 'data' , function(d){
-      var cmd = d[0].toLowerCase() ;
-      var key = d[1] ;
+    var q = async.queue(function (payload, callback) {
     
-      if ( unshardable.indexOf( cmd ) >= 0 ) {
+      client.once('data',function(d){
       
-        c.write(format('-NOTSUPPORTED Command "%s" not shardable.\r\n',cmd.toUpperCase()))
+        callback( null , d )
       
+      })
+    
+      if ( _ready ) {
+      
+        client.write(payload.cmd) ;
+    
       } else {
       
-        var shard = servers.indexOf(ring.get( key )) ;
-      
-        var clientQueue = clientQueues[ shard ] ;
-      
-        clientQueue.push( { cmd : clientCommand } , function ( err , d ) {
-          
-          c.write(d) ;
+        client.once('connect',function(){
         
-        })
+          client.write(payload.cmd);
+        
+        });
       
       }
     
-    }) ;
-    
-    protocol_parse.write(clientCommand) ;
-    
+    }, 1 );
+  
+    return q ;
+  
   })
   
-/*
-  console.log('server connected');
-  c.on('end', function() {
-    console.log('server disconnected');
-  });
-  c.write('hello\r\n');
-  c.pipe(c);
-*/
+  var server = this.server = net.createServer(function(c) { //'connection' listener
 
-});
-server.listen(8124, function() { //'listening' listener
-  console.log('listening for connections on port 8124');
-});
+    c.on('data',function(clientCommand){
+
+      var parser = new Parser({ return_buffers : false }) ;
+  
+      parser.on( 'reply' , function(d){
+      
+        var cmd = d[0].toLowerCase() ;
+        var key = d[1] ;
+    
+        if ( shardable.indexOf( cmd ) < 0 ) {
+      
+          c.write(format('-NOTSUPPORTED Command "%s" not shardable.\r\n',cmd.toUpperCase()))
+      
+        } else {
+      
+          var shard = serverKeys.indexOf(ring.get( key )) ;
+      
+          var clientQueue = clientQueues[ shard ] ;
+      
+          clientQueue.push( { cmd : clientCommand } , function ( err , d ) {
+          
+            c.write(d) ;
+        
+          })
+      
+        }
+    
+      }) ;
+    
+      parser.execute(clientCommand) ;
+    
+    })
+
+  });
+  
+}
