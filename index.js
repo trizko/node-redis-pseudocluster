@@ -1,12 +1,9 @@
 var net = require('net') ;
 var format = require('util').format ;
-var proxy = require('./lib/proxy') ;
 var async = require('async') ;
-var commands = require('redis/lib/commands') ;
 var _ = require('underscore') ;
 var HashRing = require('hashring') ;
 var shardable = require('redis-shard/lib/shardable') ;
-var redis = require('redis') ;
 var Parser = require('redis/lib/parser/hiredis').Parser ;
 
 var PseudoCluster = module.exports = function ( servers ) {
