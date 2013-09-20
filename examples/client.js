@@ -5,7 +5,6 @@ var async = require('async') ;
 
 redis.debug_mode = true ;
 
-/*
 async.waterfall([
   
   function ( cb ) { client.sadd("mySet","foo",cb) },
@@ -23,5 +22,4 @@ m.exec(function(){
   console.log(arguments);
   
 })
-*/
 client.keys('*',redis.print)
