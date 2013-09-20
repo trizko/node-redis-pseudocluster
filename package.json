@@ -18,14 +18,11 @@
   ],
   "dependencies": {
     "redis": "~0.8.4",
-    "upnode": "~0.4.3",
     "async": "~0.2.9",
     "underscore": "~1.5.2",
-    "winston": "~0.7.2",
-    "redis-protocol-stream": "~0.1.5",
-    "redis-shard": "git://github.com/objectundefined/redis-shard",
     "hashring": "~1.0.2",
-    "hiredis": "~0.1.15"
+    "hiredis": "~0.1.15",
+    "through": "~2.3.4"
   },
   "author": "Gabriel Lipson",
   "license": "BSD",
