@@ -12,15 +12,16 @@ async.waterfall([
   function ( numAdded , cb ) { client.smembers("mySet",cb) }
   
 ] , redis.print );
-*/
 
 var m = client.multi() ;
 
 m.set("foo","bar");
-m.get("baz")
+m.get("baz");
 
 m.exec(function(){
   
   console.log(arguments);
   
 })
+*/
+client.keys('*',redis.print)

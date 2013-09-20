@@ -22,12 +22,19 @@ var PseudoCluster = module.exports = function ( servers ) {
     var _ready = false ;
     var host = server.host ;
     var port = server.port ;
-    var client = net.connect({port: port , host : host},function(){
-      
-      _ready = true ;
-      
+    var client = net.connect({port: port , host : host});
+    
+    client.setKeepAlive(true);
+    
+    client.on('connect',function(socket){ console.log("connected to redis server at %s:%s" , host , port ) ; _ready = true ; });
+    client.on('error',function(err){ _ready = false ; console.error( format( "%s:%s reported error:" , host , port ) , err.message ) });
+    client.on('close',function(err){ 
+      _ready = false ;
+      console.error( "%s:%s reconnecting:" , host , port ) ; 
+      setTimeout(function(){ client.connect(port,host) },1000);
     });
-
+    
+    
     var q = async.queue(function (payload, callback) {
     
       client.once('data',function(d){
@@ -83,9 +90,9 @@ var PseudoCluster = module.exports = function ( servers ) {
       var hasCommands = fullCmd.length && fullCmd[0].length ;
       var firstCommand = hasCommands && fullCmd[0][0] ;
       var lastCommand = hasCommands && fullCmd[ fullCmd.length-1 ][ fullCmd[ fullCmd.length-1 ].length-1 ]
-      var isMultiHeader = firstCommand.toLowerCase() == "multi" ;
-      var isMultiFooter = lastCommand.toLowerCase() == "exec" ;
-      var isDiscard = firstCommand.toLowerCase() == "discard" ;
+      var isMultiHeader = firstCommand && firstCommand.toLowerCase() == "multi" ;
+      var isMultiFooter = lastCommand && lastCommand.toLowerCase() == "exec" ;
+      var isDiscard = firstCommand && firstCommand.toLowerCase() == "discard" ;
       
       inMulti = isMultiHeader || inMulti ;
       discard = isDiscard || discard ;
@@ -110,7 +117,7 @@ var PseudoCluster = module.exports = function ( servers ) {
           
           var newCmdArr = cmdArray.filter(function(cmd){
             
-            return cmd.toLowerCase() !== "multi" && cmd.toLowerCase() !== "exec"
+            return _.isString(cmd) && cmd.toLowerCase() !== "multi" && cmd.toLowerCase() !== "exec"
             
           }) ;
           
@@ -199,7 +206,7 @@ var PseudoCluster = module.exports = function ( servers ) {
 
 PseudoCluster.prototype.getReply = function ( cmd , key , clientCommand , cb ) {
   
-  var cmd = cmd.toLowerCase() ;
+  var cmd = _.isString(cmd) && cmd.toLowerCase() ;
   
   if ( cmd == "exec" ) {
    
@@ -229,8 +236,10 @@ PseudoCluster.prototype.getReply = function ( cmd , key , clientCommand , cb ) {
         
       })
       
-      var result = format("*%s\r\n",allTokens.length/2) + allTokens.join("\r\n") + "\r\n";
-
+      allTokens.unshift(format("*%s",allTokens.length/2));
+      
+      var result =  allTokens.join("\r\n") + "\r\n" ;
+      
       cb(null , result ) ;
       
     })
