@@ -5,12 +5,6 @@ var async = require('async') ;
 
 redis.debug_mode = true ;
 
-async.waterfall([
-  
-  function ( cb ) { client.sadd("mySet","foo",cb) },
-  function ( numAdded , cb ) { client.smembers("mySet",cb) }
-  
-] , redis.print );
 
 var m = client.multi() ;
 
@@ -22,4 +16,4 @@ m.exec(function(){
   console.log(arguments);
   
 })
-client.keys('*',redis.print)
+//client.keys('*',redis.print)

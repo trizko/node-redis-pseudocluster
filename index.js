@@ -4,10 +4,12 @@ var async = require('async') ;
 var _ = require('underscore') ;
 var through  = require('through')
 var HashRing = require('hashring') ;
-var shardable = require('./lib/shardable') ;
-var distributable = require('./lib/distributable') ;
+var shardableCommands = require('./lib/shardable') ;
+var distributableCommands = require('./lib/distributable') ;
+var customCommands = require('./lib/custom') ;
 var commands = require("redis/lib/commands") ;
 var hiredis = require("hiredis");
+var multiEnabled = false ;
 
 var PseudoCluster = module.exports = function ( servers ) {
   
@@ -72,14 +74,14 @@ var PseudoCluster = module.exports = function ( servers ) {
     var discard = false ;
     var multiIncrementalResponseTimeout;
     var replyTimeout = function(){
-      
+
       multiIncrementalResponseTimeout = setTimeout(function(){
         
         var reply = multiReplies.shift() ;
         
         if ( reply ) c.write( reply ) ;
         
-      },10)
+      },1)
       
     };
     
@@ -97,7 +99,7 @@ var PseudoCluster = module.exports = function ( servers ) {
       inMulti = isMultiHeader || inMulti ;
       discard = isDiscard || discard ;
       
-      if ( ! inMulti ) {
+      if ( ! multiEnabled || ! inMulti ) {
         
         _this.getReply( fullCmd[0][0] , fullCmd[0][1] , clientCommand , function(err,reply){
           
@@ -208,13 +210,17 @@ PseudoCluster.prototype.getReply = function ( cmd , key , clientCommand , cb ) {
   
   var cmd = _.isString(cmd) && cmd.toLowerCase() ;
   
-  if ( cmd == "exec" ) {
+  if ( multiEnabled && cmd == "exec" ) {
    
     var err = "ERR EXEC without MULTI\r\n"
     
     cb( err , null );
+
+  } else if ( customCommands.hasOwnProperty( cmd ) ) {
     
-  } else if ( distributable.indexOf( cmd ) >= 0 ) {
+    cb( null , customCommands[cmd](this) ) ;
+    
+  } else if ( distributableCommands.indexOf( cmd ) >= 0 ) {
     
     async.map( this.clientQueues , function ( clientQueue , cb ) {
       
@@ -225,7 +231,7 @@ PseudoCluster.prototype.getReply = function ( cmd , key , clientCommand , cb ) {
       var allTokens = [] ;
       
       results.forEach(function(res,i){
-
+        
         var tokens = tokenize(res).filter(function(token){
           
           return token.charAt(0) !== "*"
@@ -244,7 +250,7 @@ PseudoCluster.prototype.getReply = function ( cmd , key , clientCommand , cb ) {
       
     })
     
-  } else if ( shardable.indexOf( cmd ) > 0 ) {
+  } else if ( shardableCommands.indexOf( cmd ) > 0 ) {
     
     var shard = this.serverKeys.indexOf(this.ring.get( key )) ;
 
