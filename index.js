@@ -26,6 +26,39 @@ var PseudoCluster = module.exports = function ( servers ) {
     var host = server.host ;
     var port = server.port ;
     var client = net.connect({port: port , host : host});
+    var _write = function(args) {
+        var i;
+        client.write( "*" + args.length + "\r\n");
+        for (i = 0; i < args.length; i++) {
+            var arg = args[i];
+            client.write( "$" + arg.length + "\r\n" + arg + "\r\n");
+        }
+    }
+    var q = async.queue(function (payload, callback) {
+      
+      var serialized = stringifyCommand(payload.cmd) ;
+
+      client.once('data',function(d){
+      
+        callback( null , d )
+      
+      })
+    
+      if ( _ready ) {
+      
+        _write(payload.cmd) ;
+    
+      } else {
+      
+        client.once('connect',function(){
+        
+          _write(payload.cmd);
+        
+        });
+      
+      }
+    
+    }, 1 );
     
     client.setKeepAlive(true);
     
@@ -37,31 +70,6 @@ var PseudoCluster = module.exports = function ( servers ) {
       setTimeout(function(){ client.connect(port,host) },1000);
     });
     
-    
-    var q = async.queue(function (payload, callback) {
-    
-      client.once('data',function(d){
-      
-        callback( null , d )
-      
-      })
-    
-      if ( _ready ) {
-      
-        client.write(payload.cmd) ;
-    
-      } else {
-      
-        client.once('connect',function(){
-        
-          client.write(payload.cmd);
-        
-        });
-      
-      }
-    
-    }, 1 );
-  
     return q ;
   
   })
@@ -73,15 +81,18 @@ var PseudoCluster = module.exports = function ( servers ) {
     var writeReply = function(reply){
       if ( c.writable ) c.write(reply);
     }
+    var writeError = function(err){
+      if ( c.writable ) c.write(format('-%s\r\n',err.replace(/[\r\n]/g,'')))
+    };
     
     c.on('error',function(err){ console.error(err); })
     
     protocolFeed.on('command',function( cmd , done ){
       
-      _this.getReply( cmd.parsed[0] , cmd.parsed[1] , cmd.serialized , function(err,reply) {
+      _this.getReply( cmd , function(err,reply) {
         
         if ( err ) {
-          writeReply(format('-%s\r\n',err));
+          writeError(err);
         } else {
           writeReply(reply);
         }
@@ -111,37 +122,42 @@ var PseudoCluster = module.exports = function ( servers ) {
 
     protocolFeed.on('multi_command',function( cmd , done ){
       
-      _this.getReply( cmd.parsed[0] , cmd.parsed[1] , cmd.serialized , function(err,reply) {
-      
-        if ( err ) {
-          
-          multiStack.drain() ;
-          writeReply(format('-%s\r\n',err));
-          
-        } else {
-          writeReply("+QUEUED\r\n");
-          multiStack.push(reply) ;
-        }
-        
-        done() ;    
-      
-      })  
+      writeReply("+QUEUED\r\n");
+      multiStack.push( cmd );
+      done();
       
     });
 
-    protocolFeed.on('multi_exec',function( cmd , done ){
+    protocolFeed.on('multi_exec',function( execCmd , done ){
       
-      var results = multiStack.drain() ;
+      var commands = multiStack.drain();
       
-      writeReply(format("*%s\r\n%s", results.length , results.join("") ))
-      
-      done();
+      async.mapSeries( commands , function ( cmd , cb ) {
+        
+        _this.getReply( cmd , function (err,reply) {
+          
+          if ( err ) {
+            cb( null , format('-%s\r\n',err.replace(/[\r\n]/g,'') ) ) ;
+          } else {
+            cb( null , reply ) ;            
+          }  
+          
+        });
+        
+      } , function ( err , results ) {
+        
+        if ( err ) writeError( err ) ;
+        else writeReply( format("*%s\r\n%s" , results.length , results.join('') ) ) ;
+        
+        done()
+        
+      })
       
     });
     
     protocolFeed.on('invalid_command',function(err,done){
       
-      writeReply(format('-%s\r\n',err.command_error));
+      writeError(err.command_error);
       done();
       
     })
@@ -157,19 +173,20 @@ var PseudoCluster = module.exports = function ( servers ) {
   
 }
 
-PseudoCluster.prototype.getReply = function ( cmd , key , clientCommand , cb ) {
+PseudoCluster.prototype.getReply = function ( cmd , cb ) {
   
-  var cmd = _.isString(cmd) && cmd.toLowerCase() ;
+  var mainCmd = _.isArray( cmd ) && cmd.length && _.isString(cmd[0]) && cmd[0].toLowerCase() || null ;
+  var key = _.isArray( cmd ) && cmd.length && cmd[1] ;
   
-  if ( customCommands.hasOwnProperty( cmd ) ) {
+  if ( customCommands.hasOwnProperty( mainCmd ) ) {
     
-    cb( null , customCommands[cmd](this) ) ;
+    cb( null , customCommands[mainCmd](this) ) ;
     
-  } else if ( distributableCommands.indexOf( cmd ) >= 0 ) {
+  } else if ( distributableCommands.indexOf( mainCmd ) >= 0 ) {
     
     async.map( this.clientQueues , function ( clientQueue , cb ) {
       
-      clientQueue.push( { cmd : clientCommand } , cb )
+      clientQueue.push( { cmd : cmd } , cb )
       
     }, function ( err , results ) {
       
@@ -195,13 +212,13 @@ PseudoCluster.prototype.getReply = function ( cmd , key , clientCommand , cb ) {
       
     })
     
-  } else if ( shardableCommands.indexOf( cmd ) > 0 ) {
+  } else if ( shardableCommands.indexOf( mainCmd ) > 0 ) {
     
     var shard = this.serverKeys.indexOf(this.ring.get( key )) ;
 
     var clientQueue = this.clientQueues[ shard ] ;
 
-    clientQueue.push( { cmd : clientCommand } , function ( err , d ) {
+    clientQueue.push( { cmd : cmd } , function ( err , d ) {
       
       cb( null , d ) ;
 
@@ -220,5 +237,20 @@ PseudoCluster.prototype.getReply = function ( cmd , key , clientCommand , cb ) {
 function tokenize ( str ) {
   
   return str.toString().match(/(\S+|\n|\r)/g).filter(function(s){return s.replace(/^\s+|\s+$/g, '').length ;}) ;
+  
+}
+
+function stringifyCommand ( commandArray ) {
+    
+  var i , d = "" ;
+  
+  d += "*" + commandArray.length + "\r\n" ;
+
+  for (i = 0; i < commandArray.length; i++) {
+      var arg = commandArray[i];
+      d += "$" + arg.length + "\r\n" + arg + "\r\n" ;
+  }
+  
+  return d ;
   
 }
