@@ -1,19 +1,51 @@
 var redis = require('redis') ;
-// must not send INFO cmd with ready check. not supported because it's not shardable
-var client = redis.createClient( 8124 , null , { no_ready_check : true } ) ; 
-var async = require('async') ;
-
-redis.debug_mode = true ;
+var client = redis.createClient( 8124 , null , { no_ready_check : true }) ; 
 
 
-var m = client.multi() ;
 
-m.set("foo","bar");
-m.get("baz");
+//redis.debug_mode = true ;
 
-m.exec(function(){
+client.sadd("mySet","foo",redis.print)
+client.smembers("mySet",redis.print)
+client.keys('*',redis.print)
+
+setTimeout(function(){
+  var m = client.multi() ; 
+  client.sadd("mySet","foo",redis.print)
+  client.smembers("mySet",redis.print)
+  client.keys('*',redis.print)
+
+  m.set("foo","bar");
+  m.get("baz");
+  m.exec( redis.print ) ;
   
-  console.log(arguments);
+},1)
+
+setTimeout(function(){
+  var m = client.multi() ;
+  client.sadd("mySet","foo",redis.print)
+  client.smembers("mySet",redis.print)
+  client.keys('*',redis.print)
+
+  m.set("foo","bar");
+  m.get("baz");
+  m.exec( redis.print ) ;
   
-})
-//client.keys('*',redis.print)
+},1)
+
+setTimeout(function(){
+  
+  client.sadd("mySet","foo",redis.print)
+  client.smembers("mySet",redis.print)
+  client.keys('*',redis.print)
+  
+},1)
+
+
+setTimeout(function(){
+  
+  client.sadd("mySet","foo",redis.print)
+  client.smembers("mySet",redis.print)
+  client.keys('*',redis.print)
+  
+},2)

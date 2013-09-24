@@ -8,8 +8,9 @@ var shardableCommands = require('./lib/shardable') ;
 var distributableCommands = require('./lib/distributable') ;
 var customCommands = require('./lib/custom') ;
 var commands = require("redis/lib/commands") ;
-var hiredis = require("hiredis");
-var multiEnabled = false ;
+var redis_protocol = require('redis-protocol-stream')
+var ProtocolFeed = require('./lib/ProtocolFeed') ;
+var MultiStack = require('./lib/MultiStack') ;
 
 var PseudoCluster = module.exports = function ( servers ) {
   
@@ -67,138 +68,83 @@ var PseudoCluster = module.exports = function ( servers ) {
   
   var server = this.server = net.createServer(function(c) { //'connection' listener
     
-    var inMulti = false ;
-    var multiReplies = [] ;
-    var multiResults = [] ;
-    var multiCommands = [] ;
-    var discard = false ;
-    var multiIncrementalResponseTimeout;
-    var replyTimeout = function(){
-
-      multiIncrementalResponseTimeout = setTimeout(function(){
-        
-        var reply = multiReplies.shift() ;
-        
-        if ( reply ) c.write( reply ) ;
-        
-      },1)
-      
-    };
+    var protocolFeed = new ProtocolFeed(c) ;
+    var multiStack = new MultiStack() ;
     
-    
-    c.on('data',function(clientCommand){
-
-      var fullCmd = parseClientCommand( clientCommand ) ;
-      var hasCommands = fullCmd.length && fullCmd[0].length ;
-      var firstCommand = hasCommands && fullCmd[0][0] ;
-      var lastCommand = hasCommands && fullCmd[ fullCmd.length-1 ][ fullCmd[ fullCmd.length-1 ].length-1 ]
-      var isMultiHeader = firstCommand && firstCommand.toLowerCase() == "multi" ;
-      var isMultiFooter = lastCommand && lastCommand.toLowerCase() == "exec" ;
-      var isDiscard = firstCommand && firstCommand.toLowerCase() == "discard" ;
+    protocolFeed.on('command',function( cmd , done ){
       
-      inMulti = isMultiHeader || inMulti ;
-      discard = isDiscard || discard ;
-      
-      if ( ! multiEnabled || ! inMulti ) {
+      _this.getReply( cmd.parsed[0] , cmd.parsed[1] , cmd.serialized , function(err,reply) {
         
-        _this.getReply( fullCmd[0][0] , fullCmd[0][1] , clientCommand , function(err,reply){
-          
-          if ( err ) {
-            c.write(format("-%s",err));
-          } else {
-            c.write(reply);            
-          }
-        
-        })
-        
-      } else {
-        
-        clearTimeout( multiIncrementalResponseTimeout ) ;
-        
-        fullCmd.forEach(function(cmdArray){
-          
-          var newCmdArr = cmdArray.filter(function(cmd){
-            
-            return _.isString(cmd) && cmd.toLowerCase() !== "multi" && cmd.toLowerCase() !== "exec"
-            
-          }) ;
-          
-          if ( newCmdArr.length ) {
-            
-            multiReplies.push("+QUEUED\r\n") ;
-            multiCommands.push( newCmdArr ) ;
-            replyTimeout();
-                        
-          }
-          
-        })
-        
-        if ( isMultiHeader && ! multiCommands.length ) {
-          
-          multiReplies.push("+OK\r\n");
-          replyTimeout();
-          
-        } else if ( isMultiHeader && multiCommands.length ) {
-          
-          discard = true ;
-          multiReplies.push("-ERR wrong number of arguments for 'multi' command\r\n");
-          replyTimeout();
-          
-        } else if ( isMultiFooter && discard ) {
-          
-          var response = multiReplies.concat(["-ERR multi discarded\r\n"]).join("")
-          
-          c.write(response);
-          
-          inMulti = false ;
-          discard = false ;
-          multiReplies = [] ;
-          multiCommands = [] ;
-          multiResults = [] ;
-          
-          
-        } else if ( isMultiFooter && ! discard ) {
-          
-          multiResults.push(format("*%s\r\n",multiCommands.length)) ;
-          
-          async.map( multiCommands , function ( multiCommandArr , cb ){
-            
-            var command = format("*%s\r\n",multiCommandArr.length) ;
-            
-            multiCommandArr.forEach(function(token){
-              
-              command += format("$%s\r\n%s\r\n",token.length,token) ;
-              
-            })
-            
-            _this.getReply( multiCommandArr[0] , multiCommandArr[1] , command , function(err,reply){
-              
-              if ( err ) {
-                cb(null,format("-%s",err));
-              } else {
-                cb(null,reply)
-              }
-              
-            });
-            
-          } , function(err,results) {
-            
-            var response = multiReplies.concat(multiResults).concat(results).join("")
-            
-            c.write(response);
-            
-            inMulti = false ;
-            discard = false ;
-            multiReplies = [] ;
-            multiCommands = [] ;
-            multiResults = [] ;
-            
-            
-          })
-          
+        if ( err ) {
+          c.write(format('-%s\r\n',err));
+        } else {
+          c.write(reply);
         }
         
-      }
+        done();
+        
+      })  
+      
+      
+    })
+
+    protocolFeed.on('multi_start',function( cmd , done ){
+      
+      multiStack.drain() ;
+      c.write("+OK\r\n");
+      done() ;
+            
+    });
+
+    protocolFeed.on('multi_discard',function( cmd , done ){
+      
+      multiStack.drain() ;
+      c.write("+OK\r\n");
+      done() ;
+            
+    });
+
+    protocolFeed.on('multi_command',function( cmd , done ){
+      
+      _this.getReply( cmd.parsed[0] , cmd.parsed[1] , cmd.serialized , function(err,reply) {
+      
+        if ( err ) {
+          
+          multiStack.drain() ;
+          c.write(format('-%s\r\n',err));
+          
+        } else {
+          c.write("+QUEUED\r\n");
+          multiStack.push(reply) ;
+        }
+        
+        done() ;    
+      
+      })  
+      
+    });
+
+    protocolFeed.on('multi_exec',function( cmd , done ){
+      
+      var results = multiStack.drain() ;
+      
+      c.write(format("*%s\r\n%s", results.length , results.join("") ))
+      
+      done();
+      
+    });
+    
+    protocolFeed.on('invalid_command',function(err,done){
+      
+      c.write(format('-%s\r\n',err.command_error));
+      done();
+      
+    })
+
+    protocolFeed.on('error',function(err,done){
+      
+      console.error("error",arguments);
+      done();
     
     })
 
@@ -210,13 +156,7 @@ PseudoCluster.prototype.getReply = function ( cmd , key , clientCommand , cb ) {
   
   var cmd = _.isString(cmd) && cmd.toLowerCase() ;
   
-  if ( multiEnabled && cmd == "exec" ) {
-   
-    var err = "ERR EXEC without MULTI\r\n"
-    
-    cb( err , null );
-
-  } else if ( customCommands.hasOwnProperty( cmd ) ) {
+  if ( customCommands.hasOwnProperty( cmd ) ) {
     
     cb( null , customCommands[cmd](this) ) ;
     
@@ -269,58 +209,6 @@ PseudoCluster.prototype.getReply = function ( cmd , key , clientCommand , cb ) {
     cb( err , null ) ;
 
   }
-  
-}
-
-function parseClientCommand ( clientCommand ) {
-  
-  var fullCmd = [] ;
-  
-  if ( clientCommand.toString().charAt(0) == "*" ) {
-    
-    var stillData = true ;
-    var reader = new hiredis.Reader();
-    reader.feed(clientCommand) ;
-
-    while ( stillData ) {
-    
-      var part = reader.get() ;
-    
-      if ( part ) {
-      
-        fullCmd.push(part) ;
-      
-      } else {
-      
-        stillData = false ;
-      
-      }
-    
-    }
-    
-  } else {
-    
-    var tokens = tokenize(clientCommand);
-    
-    tokens.forEach(function(token){
-      
-      if ( commands.indexOf( token.toLowerCase() ) >=0 ) {
-        
-        fullCmd.push([]) ;
-        
-      }
-      
-      if ( fullCmd.length ) {
-        
-        fullCmd[fullCmd.length-1].push( token ) ;
-        
-      }
-      
-    })
-    
-  }
-  
-  return fullCmd ;
   
 }
 
