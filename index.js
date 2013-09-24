@@ -70,7 +70,7 @@ var PseudoCluster = module.exports = function ( servers ) {
     
     var protocolFeed = new ProtocolFeed(c) ;
     var multiStack = new MultiStack() ;
-    
+
     protocolFeed.on('command',function( cmd , done ){
       
       _this.getReply( cmd.parsed[0] , cmd.parsed[1] , cmd.serialized , function(err,reply) {
