@@ -29,7 +29,7 @@ var PseudoCluster = module.exports = function ( servers ) {
     
     client.setKeepAlive(true);
     
-    client.on('connect',function(socket){ console.log("connected to redis server at %s:%s" , host , port ) ; _ready = true ; });
+    client.on('connect',function(socket){ _ready = true ; });
     client.on('error',function(err){ _ready = false ; console.error( format( "%s:%s reported error:" , host , port ) , err.message ) });
     client.on('close',function(err){ 
       _ready = false ;
