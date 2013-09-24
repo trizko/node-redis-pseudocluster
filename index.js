@@ -70,15 +70,20 @@ var PseudoCluster = module.exports = function ( servers ) {
     
     var protocolFeed = new ProtocolFeed(c) ;
     var multiStack = new MultiStack() ;
-
+    var writeReply = function(reply){
+      if ( c.writable ) c.write(reply);
+    }
+    
+    c.on('error',function(err){ console.error(err); })
+    
     protocolFeed.on('command',function( cmd , done ){
       
       _this.getReply( cmd.parsed[0] , cmd.parsed[1] , cmd.serialized , function(err,reply) {
         
         if ( err ) {
-          c.write(format('-%s\r\n',err));
+          writeReply(format('-%s\r\n',err));
         } else {
-          c.write(reply);
+          writeReply(reply);
         }
         
         done();
@@ -91,7 +96,7 @@ var PseudoCluster = module.exports = function ( servers ) {
     protocolFeed.on('multi_start',function( cmd , done ){
       
       multiStack.drain() ;
-      c.write("+OK\r\n");
+      writeReply("+OK\r\n");
       done() ;
             
     });
@@ -99,7 +104,7 @@ var PseudoCluster = module.exports = function ( servers ) {
     protocolFeed.on('multi_discard',function( cmd , done ){
       
       multiStack.drain() ;
-      c.write("+OK\r\n");
+      writeReply("+OK\r\n");
       done() ;
             
     });
@@ -111,10 +116,10 @@ var PseudoCluster = module.exports = function ( servers ) {
         if ( err ) {
           
           multiStack.drain() ;
-          c.write(format('-%s\r\n',err));
+          writeReply(format('-%s\r\n',err));
           
         } else {
-          c.write("+QUEUED\r\n");
+          writeReply("+QUEUED\r\n");
           multiStack.push(reply) ;
         }
         
@@ -128,7 +133,7 @@ var PseudoCluster = module.exports = function ( servers ) {
       
       var results = multiStack.drain() ;
       
-      c.write(format("*%s\r\n%s", results.length , results.join("") ))
+      writeReply(format("*%s\r\n%s", results.length , results.join("") ))
       
       done();
       
@@ -136,7 +141,7 @@ var PseudoCluster = module.exports = function ( servers ) {
     
     protocolFeed.on('invalid_command',function(err,done){
       
-      c.write(format('-%s\r\n',err.command_error));
+      writeReply(format('-%s\r\n',err.command_error));
       done();
       
     })
@@ -204,7 +209,7 @@ PseudoCluster.prototype.getReply = function ( cmd , key , clientCommand , cb ) {
 
   } else {
     
-    var err = format('NOTSUPPORTED Command "%s" not shardable.\r\n',cmd.replace(/^\s+|\s+$/g, '').toUpperCase()) ;
+    var err = format('NOTSUPPORTED Command "%s" not shardable.',cmd.replace(/^\s+|\s+$/g, '').toUpperCase()) ;
     
     cb( err , null ) ;
 
