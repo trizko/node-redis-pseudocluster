@@ -17,11 +17,11 @@
     "sharding"
   ],
   "dependencies": {
-    "redis": "~0.8.4",
+    "redis": "2.6.2",
     "async": "~0.2.9",
     "underscore": "~1.5.2",
-    "hashring": "~1.0.2",
-    "hiredis": "~0.1.15",
+    "hashring": "3.2.0",
+    "hiredis": "0.5.0",
     "through": "~2.3.4",
     "moment": "~2.2.1",
     "redis-protocol-stream": "~0.1.5"
